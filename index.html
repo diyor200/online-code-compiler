@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Code Compiler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        
+        textarea {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .gradient-bg {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+        }
+
+        .code-editor:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen text-white">
+    <div id="root" class="p-4"></div>
+
+    <script>
+        const LANGUAGES = [
+            { id: 'python', name: 'Python', starter: 'print("Hello, World!")' },
+            { id: 'javascript', name: 'JavaScript', starter: 'console.log("Hello, World!");' },
+            { id: 'go', name: 'Go', starter: 'package main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, World!")\n}' },
+            { id: 'java', name: 'Java', starter: 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}' },
+            { id: 'cpp', name: 'C++', starter: '#include <iostream>\n\nint main() {\n    std::cout << "Hello, World!" << std::endl;\n    return 0;\n}' },
+            { id: 'c', name: 'C', starter: '#include <stdio.h>\n\nint main() {\n    printf("Hello, World!\\n");\n    return 0;\n}' },
+        ];
+
+        // State management
+        let state = {
+            language: LANGUAGES[0],
+            code: LANGUAGES[0].starter,
+            stdin: '',
+            output: '',
+            isExecuting: false,
+            executionTime: null,
+            error: null
+        };
+
+        // API Configuration
+        const API_URL = 'http://localhost:8080';
+
+        // Icons as SVG strings
+        const icons = {
+            play: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>',
+            terminal: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>',
+            code: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>',
+            alertCircle: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>',
+            checkCircle: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>'
+        };
+
+        // Render functions
+        function render() {
+            const root = document.getElementById('root');
+            root.innerHTML = `
+                <div class="max-w-7xl mx-auto">
+                    <!-- Header -->
+                    <div class="mb-6">
+                        <div class="flex items-center gap-3 mb-2">
+                            <div class="text-blue-400">${icons.code}</div>
+                            <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                                Online Code Compiler
+                            </h1>
+                        </div>
+                        <p class="text-slate-400">Write, compile, and run code instantly</p>
+                    </div>
+
+                    <!-- Main Content -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <!-- Left Panel - Code Editor -->
+                        <div class="space-y-4">
+                            <!-- Language Selector -->
+                            <div class="bg-slate-800/50 backdrop-blur-sm rounded-lg p-4 border border-slate-700/50">
+                                <label class="block text-sm font-medium text-slate-300 mb-2">
+                                    Select Language
+                                </label>
+                                <select 
+                                    id="languageSelect"
+                                    class="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    onchange="handleLanguageChange(this.value)"
+                                >
+                                    ${LANGUAGES.map(lang => `
+                                        <option value="${lang.id}" ${state.language.id === lang.id ? 'selected' : ''}>
+                                            ${lang.name}
+                                        </option>
+                                    `).join('')}
+                                </select>
+                            </div>
+
+                            <!-- Code Editor -->
+                            <div class="bg-slate-800/50 backdrop-blur-sm rounded-lg border border-slate-700/50 overflow-hidden">
+                                <div class="bg-slate-700/50 px-4 py-2 border-b border-slate-600/50 flex items-center justify-between">
+                                    <span class="text-sm font-medium text-slate-300">Code Editor</span>
+                                    <span class="text-xs text-slate-400">${state.language.name}</span>
+                                </div>
+                                <textarea
+                                    id="codeEditor"
+                                    class="code-editor w-full min-h-[400px] bg-slate-900/50 p-4 text-sm text-white resize-none"
+                                    spellcheck="false"
+                                    oninput="handleCodeChange(this.value)"
+                                    onkeydown="handleKeyDown(event)"
+                                >${state.code}</textarea>
+                            </div>
+
+                            <!-- Input -->
+                            <div class="bg-slate-800/50 backdrop-blur-sm rounded-lg border border-slate-700/50 overflow-hidden">
+                                <div class="bg-slate-700/50 px-4 py-2 border-b border-slate-600/50">
+                                    <span class="text-sm font-medium text-slate-300">Input (stdin)</span>
+                                </div>
+                                <textarea
+                                    id="stdinInput"
+                                    class="w-full h-24 bg-slate-900/50 p-4 text-sm font-mono text-white focus:outline-none resize-none"
+                                    placeholder="Enter input for your program..."
+                                    oninput="handleStdinChange(this.value)"
+                                >${state.stdin}</textarea>
+                            </div>
+
+                            <!-- Run Button -->
+                            <button
+                                onclick="handleExecute()"
+                                ${state.isExecuting ? 'disabled' : ''}
+                                class="btn-primary w-full text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-lg"
+                            >
+                                ${state.isExecuting ? `
+                                    <div class="spinner"></div>
+                                    <span>Executing...</span>
+                                ` : `
+                                    <span>${icons.play}</span>
+                                    <span>Run Code</span>
+                                `}
+                            </button>
+                        </div>
+
+                        <!-- Right Panel - Output -->
+                        <div class="space-y-4">
+                            <div class="bg-slate-800/50 backdrop-blur-sm rounded-lg border border-slate-700/50 overflow-hidden h-full">
+                                <div class="bg-slate-700/50 px-4 py-2 border-b border-slate-600/50 flex items-center justify-between">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-green-400">${icons.terminal}</span>
+                                        <span class="text-sm font-medium text-slate-300">Output</span>
+                                    </div>
+                                    ${state.executionTime ? `
+                                        <span class="text-xs text-green-400 flex items-center gap-1">
+                                            ${icons.checkCircle}
+                                            ${state.executionTime}s
+                                        </span>
+                                    ` : ''}
+                                </div>
+                                
+                                <div class="p-4 min-h-[500px] max-h-[600px] overflow-auto">
+                                    ${state.output || state.error ? `
+                                        <div class="space-y-3">
+                                            ${state.output ? `
+                                                <div class="bg-slate-900/50 rounded p-3">
+                                                    <div class="text-xs text-green-400 mb-1 font-medium">STDOUT:</div>
+                                                    <pre class="text-sm font-mono text-white">${escapeHtml(state.output)}</pre>
+                                                </div>
+                                            ` : ''}
+                                            ${state.error ? `
+                                                <div class="bg-red-900/20 border border-red-700/50 rounded p-3">
+                                                    <div class="flex items-center gap-2 text-xs text-red-400 mb-1 font-medium">
+                                                        ${icons.alertCircle}
+                                                        ERROR:
+                                                    </div>
+                                                    <pre class="text-sm font-mono text-red-300">${escapeHtml(state.error)}</pre>
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    ` : `
+                                        <div class="flex items-center justify-center h-full text-slate-500">
+                                            <div class="text-center">
+                                                <div class="w-12 h-12 mx-auto mb-3 opacity-50">${icons.terminal}</div>
+                                                <p class="text-sm">Run your code to see output here</p>
+                                            </div>
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- API Integration Info -->
+                    <div class="mt-6 bg-blue-900/20 border border-blue-700/50 rounded-lg p-4">
+                        <p class="text-sm text-blue-300">
+                            <strong>Backend URL:</strong> ${API_URL}/api/execute
+                            ${state.isExecuting ? ' <span class="text-green-400">● Connected</span>' : ''}
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Event handlers
+        function handleLanguageChange(langId) {
+            const newLang = LANGUAGES.find(l => l.id === langId);
+            state.language = newLang;
+            state.code = newLang.starter;
+            state.output = '';
+            state.error = null;
+            state.executionTime = null;
+            render();
+        }
+
+        function handleCodeChange(value) {
+            state.code = value;
+        }
+
+        function handleStdinChange(value) {
+            state.stdin = value;
+        }
+
+        function handleKeyDown(event) {
+            if (event.key === 'Tab') {
+                event.preventDefault();
+                const textarea = event.target;
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                const newCode = state.code.substring(0, start) + '    ' + state.code.substring(end);
+                state.code = newCode;
+                
+                // Update textarea value
+                textarea.value = newCode;
+                
+                // Reset cursor position
+                setTimeout(() => {
+                    textarea.selectionStart = textarea.selectionEnd = start + 4;
+                }, 0);
+            }
+        }
+
+        async function handleExecute() {
+            state.isExecuting = true;
+            state.output = '';
+            state.error = null;
+            state.executionTime = null;
+            render();
+
+            try {
+                const startTime = performance.now();
+                
+                const response = await fetch(`${API_URL}/api/execute`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        language: state.language.id,
+                        code: state.code,
+                        stdin: state.stdin,
+                    }),
+                });
+
+                const endTime = performance.now();
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Execution failed');
+                }
+
+                state.output = data.stdout || '';
+                if (data.stderr) {
+                    state.error = data.stderr;
+                }
+                state.executionTime = ((endTime - startTime) / 1000).toFixed(3);
+            } catch (err) {
+                state.error = err.message || 'Failed to connect to server. Make sure the backend is running on ' + API_URL;
+            } finally {
+                state.isExecuting = false;
+                render();
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>
