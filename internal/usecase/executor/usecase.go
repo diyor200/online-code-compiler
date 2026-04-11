@@ -1,129 +1,223 @@
 package executor
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/diyor200/code-compiler/internal/domain"
-	"github.com/google/uuid"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
 
-type UseCase struct{}
+type UseCase struct {
+	client *client.Client
+	config domain.ExecutorConfig
+}
 
-func (u *UseCase) Execute(ctx context.Context, data domain.ExecCode) (domain.ExecResult, error) {
-	// 1. Create isolated temp directory
-	id := uuid.NewString()
-	tempDir := filepath.Join(os.TempDir(), "exec-"+id)
+func New(client *client.Client, config domain.ExecutorConfig) *UseCase {
+	return &UseCase{
+		client: client,
+		config: config,
+	}
+}
 
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		logger.Error("failed to make temp dir:", err.Error())
-		return domain.ExecResult{}, err
+func (u *UseCase) Execute(ctx context.Context, data domain.ExecuteRequest) domain.ExecutionResult {
+	startTime := time.Now()
+
+	langConfig, ok := domain.LanguageConfigs[data.Language]
+	if !ok {
+		return domain.ExecutionResult{
+			Error: fmt.Errorf("language %s not supported", data.Language),
+		}
+	}
+
+	// create temp dir for the code
+	tempDir, err := os.MkdirTemp("", "code-exec-*")
+	if err != nil {
+		logger.Error("failed to create temp dir:", err)
+		return domain.ExecutionResult{Error: fmt.Errorf("failed to create temp dir: %w", err)}
 	}
 	defer os.RemoveAll(tempDir)
 
-	// 2. Get file name, docker image, and run command
-	fileName, img, runCmd, err := u.prepare(data.Lang)
-	if err != nil {
-		logger.Error("failed to prepare code:", err.Error())
-		return domain.ExecResult{}, err
+	// write code to file
+	codePath := filepath.Join(tempDir, langConfig.FileName)
+	if err = os.WriteFile(codePath, []byte(data.Code), 0644); err != nil {
+		logger.Error("failed to write code:", err)
+		return domain.ExecutionResult{Error: fmt.Errorf("failed to write code: %w", err)}
 	}
 
-	// 3. Write code to temp directory
-	filePath := filepath.Join(tempDir, fileName)
-	if err = os.WriteFile(filePath, []byte(data.Code), 0644); err != nil {
-		logger.Error("failed to write file:", err.Error())
-		return domain.ExecResult{}, err
+	// pull image if needed
+	if err = u.pullImageIfNotExist(ctx, langConfig.Image); err != nil {
+		logger.Error("failed to pull image:", err)
+		return domain.ExecutionResult{Error: fmt.Errorf("failed to pull image: %w", err)}
 	}
 
-	// 4. Get absolute path for Docker mount (important on Mac)
-	absDir, err := filepath.Abs(tempDir)
-	if err != nil {
-		logger.Error("failed to get absolute path:", err.Error())
-		return domain.ExecResult{}, err
-	}
-
-	// 5. Build Docker command
-	args := []string{
-		"run",
-		"--rm",
-
-		// resource limits
-		"--cpus=1.0",
-		"--memory=512m",
-		"--pids-limit=64",
-		"--network=none",
-		"--read-only",
-
-		// tmpfs for Go build & temp files
-		"--tmpfs", "/tmp:exec",
-
-		// non-root
-		"--user", "1000:1000",
-
-		// set Go cache
-		"-e", "GOCACHE=/tmp/go-build",
-
-		// mount code
-		"-v", fmt.Sprintf("%s:/app", absDir),
-		"-w", "/app",
-
-		img,
-	}
-	args = append(args, runCmd...)
-
-	// 6. Execute with timeout
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return domain.ExecResult{}, errors.New("execution timeout")
-	}
-
-	if err != nil {
-		logger.Error("failed to run docker command:", err.Error())
-		if stderr.Len() > 0 {
-			return domain.ExecResult{}, errors.New(stderr.String())
+	// compile if needed
+	if langConfig.NeedsCompile {
+		compileResult := u.runContainer(ctx, langConfig.Image, langConfig.CompileCmd, tempDir, "")
+		if compileResult.Error != nil {
+			return compileResult
 		}
-		return domain.ExecResult{}, err
+		if compileResult.ExitCode != 0 {
+			return domain.ExecutionResult{
+				Stderr:   compileResult.Stderr,
+				Error:    fmt.Errorf("compilation failed"),
+				ExitCode: compileResult.ExitCode,
+			}
+		}
 	}
 
-	// 7. Return stdout as result
-	return domain.ExecResult{
-		Result: stdout.String(),
-	}, nil
+	// execute code
+	result := u.runContainer(ctx, langConfig.Image, langConfig.RunCmd, tempDir, data.Stdin)
+	result.ExecutionTime = time.Since(startTime).Seconds()
+
+	return result
 }
 
-// prepare returns file name, docker image, and execution command
-func (u *UseCase) prepare(language string) (filename, image string, cmd []string, err error) {
-	switch language {
-
-	case "go":
-		return "main.go", "golang:1.22", []string{"go", "run", "main.go"}, nil
-
-	case "python":
-		return "main.py", "python:3.11", []string{"python", "main.py"}, nil
-
-	case "javascript":
-		return "main.js", "node:20", []string{"node", "main.js"}, nil
-
-	default:
-		return "", "", nil, fmt.Errorf("unsupported language: %s", language)
+func (u *UseCase) pullImageIfNotExist(ctx context.Context, image string) error {
+	_, _, err := u.client.ImageInspectWithRaw(ctx, image)
+	if err == nil {
+		return nil
 	}
+
+	// pull image
+	out, err := u.client.ImagePull(ctx, image, types.ImagePullOptions{})
+	if err != nil {
+		logger.Error("failed to pull image:", err)
+		return err
+	}
+	defer out.Close()
+
+	io.Copy(os.Stdout, out)
+	return nil
 }
 
-func New() *UseCase {
-	return &UseCase{}
+// runContainer container configuration with resource limits
+func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string, volumePath, stdin string) domain.ExecutionResult {
+	containerConfig := &container.Config{
+		Image:           image,
+		Cmd:             cmd,
+		Tty:             false,
+		AttachStdin:     stdin != "",
+		AttachStdout:    true,
+		AttachStderr:    true,
+		OpenStdin:       stdin != "",
+		StdinOnce:       true,
+		NetworkDisabled: u.config.NetworkDisabled,
+	}
+
+	hostConfig := &container.HostConfig{
+		AutoRemove:     true,
+		ReadonlyRootfs: false,
+		SecurityOpt:    []string{"no-new-privileges"},
+		Binds:          []string{fmt.Sprintf("%s:/app", volumePath)},
+		Resources: container.Resources{
+			Memory:    u.config.MemoryLimit,
+			CPUQuota:  u.config.CPUQuota,
+			CPUPeriod: 100000,
+			PidsLimit: func() *int64 { v := int64(50); return &v }(), // Limit processes,
+		},
+	}
+
+	// create container
+	resp, err := u.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	if err != nil {
+		logger.Error("failed to create container:", err)
+		return domain.ExecutionResult{Error: fmt.Errorf("failed to create container: %w", err)}
+	}
+
+	// Attach to container for stdin/stdout/stderr
+	attachResp, err := u.client.ContainerAttach(ctx, resp.ID, types.ContainerAttachOptions{
+		Stream: true,
+		Stdout: true,
+		Stderr: true,
+		Stdin:  stdin != "",
+	})
+	if err != nil {
+		logger.Error("failed to attach container:", err)
+		return domain.ExecutionResult{Error: fmt.Errorf("failed to attach container: %w", err)}
+	}
+	defer attachResp.Close()
+
+	//Write stdin if provided
+	if stdin != "" {
+		go func() {
+			attachResp.Conn.Write([]byte(stdin))
+			attachResp.CloseWrite()
+		}()
+	}
+
+	// Start container
+	if err = u.client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+		logger.Error("failed to start container:", err)
+		return domain.ExecutionResult{Error: fmt.Errorf("failed to start container: %w", err)}
+	}
+
+	// read output
+	stdout, stder := u.readOutput(attachResp.Conn)
+
+	// wait to container finish
+	statusCh, errCh := u.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case err = <-errCh:
+		if err != nil {
+			logger.Error("failed to wait for container:", err)
+			return domain.ExecutionResult{Error: fmt.Errorf("failed to wait for container: %w", err)}
+		}
+	case status := <-statusCh:
+		return domain.ExecutionResult{
+			Stdout:   stdout,
+			Stderr:   stder,
+			ExitCode: int(status.StatusCode),
+		}
+	case <-ctx.Done():
+		// timeout force kill containers
+		u.client.ContainerKill(ctx, resp.ID, "SIGKILL")
+		return domain.ExecutionResult{
+			Stderr: "execution timeout exceeded",
+			Error:  fmt.Errorf("execution timeout exceeded"),
+		}
+	}
+
+	return domain.ExecutionResult{Error: fmt.Errorf("unexpected error")}
+}
+
+func (u *UseCase) readOutput(reader io.Reader) (string, string) {
+	var stdout, stderr string
+	buf := make([]byte, 8192)
+
+	for {
+		n, err := reader.Read(buf)
+		if err != nil {
+			break
+		}
+
+		if n < 8 {
+			continue
+		}
+
+		// docker multiplexes stdout/stderr
+		// first 8 bytes: header (stream type + size)
+		streamType := buf[0]
+		size := int(buf[4])<<24 | int(buf[5])<<16 | int(buf[6])<<8 | int(buf[7])
+
+		if size > len(buf)-8 {
+			size = len(buf) - 8
+		}
+
+		content := string(buf[8 : size+8])
+
+		if streamType == 1 { // stdout
+			stdout += content
+		} else if streamType == 2 { // stderr
+			stderr += content
+		}
+	}
+
+	return stdout, stderr
 }

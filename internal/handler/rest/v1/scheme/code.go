@@ -2,26 +2,33 @@ package scheme
 
 import "github.com/diyor200/code-compiler/internal/domain"
 
-type CodeRequest struct {
+type ExecuteRequest struct {
+	Language string `json:"language" binding:"required"`
 	Code     string `json:"code" binding:"required"`
-	Language string `json:"lang" binding:"required"`
+	Stdin    string `json:"stdin"`
 }
 
-func (c *CodeRequest) ToModel() domain.ExecCode {
-	return domain.ExecCode{
-		Lang: c.Language,
-		Code: c.Code,
+// ExecuteResponse represents the API response
+type ExecuteResponse struct {
+	Stdout        string  `json:"stdout"`
+	Stderr        string  `json:"stderr"`
+	ExitCode      int     `json:"exitCode"`
+	ExecutionTime float64 `json:"executionTime"`
+}
+
+func (c *ExecuteRequest) ToModel() domain.ExecuteRequest {
+	return domain.ExecuteRequest{
+		Language: c.Language,
+		Code:     c.Code,
+		Stdin:    c.Stdin,
 	}
 }
 
-type CodeResponse struct {
-	Result string `json:"result"`
-	Error  error  `json:"error"`
-}
-
-func ToExecCodeResponse(result domain.ExecResult) *CodeResponse {
-	return &CodeResponse{
-		Result: result.Result,
-		Error:  result.Error,
+func ToExecCodeResponse(result domain.ExecuteResponse) *ExecuteResponse {
+	return &ExecuteResponse{
+		Stdout:        result.Stdout,
+		Stderr:        result.Stderr,
+		ExitCode:      result.ExitCode,
+		ExecutionTime: result.ExecutionTime,
 	}
 }

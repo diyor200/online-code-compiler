@@ -7,15 +7,29 @@ import (
 )
 
 func (h *Handler) executeCode(c *gin.Context) {
-	var req scheme.CodeRequest
+	var req scheme.ExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	res, err := h.executor.Execute(c.Request.Context(), req.ToModel())
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if len(req.Code) > 50000 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Code exceeds maximum length of 50KB",
+		})
+		return
+	}
+
+	if len(req.Stdin) > 10000 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Input exceeds maximum length of 10KB",
+		})
+		return
+	}
+
+	res := h.executor.Execute(c.Request.Context(), req.ToModel())
+	if res.Error != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": res.Error.Error()})
 		return
 	}
 

@@ -1,11 +1,15 @@
 package domain
 
-type ExecCode struct {
-	Lang string
-	Code string
+type ExecuteRequest struct {
+	Language string
+	Code     string
+	Stdin    string
 }
 
-type ExecResult struct {
-	Result string
-	Error  error
+// ExecuteResponse represents the API response
+type ExecuteResponse struct {
+	Stdout        string
+	Stderr        string
+	ExitCode      int
+	ExecutionTime float64
 }

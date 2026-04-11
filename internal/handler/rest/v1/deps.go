@@ -27,5 +27,5 @@ func NewHandler(engine *gin.Engine, conf *config.Config, executor Executor) *Han
 }
 
 type Executor interface {
-	Execute(ctx context.Context, data domain.ExecCode) (domain.ExecResult, error)
+	Execute(ctx context.Context, data domain.ExecuteRequest) domain.ExecutionResult
 }

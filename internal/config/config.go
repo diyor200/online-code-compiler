@@ -7,7 +7,7 @@ import (
 
 type Config struct {
 	HttpHost string `env:"HTTP_HOST"`
-	HttpPort string `env:"HTTP_PORT, default=8080"`
+	HttpPort string `env:"HTTP_PORT, default=8090"`
 }
 
 func NewConfig() (*Config, error) {
