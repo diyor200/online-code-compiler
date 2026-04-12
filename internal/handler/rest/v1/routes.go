@@ -1,8 +1,9 @@
 package v1
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) RegisterRoutes() {
@@ -10,7 +11,7 @@ func (h *Handler) RegisterRoutes() {
 	v1 := h.Engine.Group("/api/v1")
 
 	v1.GET("/languages", h.getSupportedLanguages)
-	v1.POST("/execute", h.executeCode)
+	v1.GET("/execute", h.executeCode)
 }
 
 func (h *Handler) healthCheck(c *gin.Context) {

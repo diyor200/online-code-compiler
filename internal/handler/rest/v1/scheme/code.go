@@ -3,9 +3,9 @@ package scheme
 import "github.com/diyor200/code-compiler/internal/domain"
 
 type ExecuteRequest struct {
-	Language string `json:"language" binding:"required"`
-	Code     string `json:"code" binding:"required"`
-	Stdin    string `json:"stdin"`
+	Language string `form:"language" binding:"required"`
+	Code     string `form:"code" binding:"required"`
+	Stdin    string `form:"stdin"`
 }
 
 // ExecuteResponse represents the API response

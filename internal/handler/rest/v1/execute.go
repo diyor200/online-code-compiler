@@ -1,14 +1,15 @@
 package v1
 
 import (
+	"net/http"
+
 	"github.com/diyor200/code-compiler/internal/handler/rest/v1/scheme"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 func (h *Handler) executeCode(c *gin.Context) {
 	var req scheme.ExecuteRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindQuery(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -27,11 +28,22 @@ func (h *Handler) executeCode(c *gin.Context) {
 		return
 	}
 
-	res := h.executor.Execute(c.Request.Context(), req.ToModel())
-	if res.Error != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": res.Error.Error()})
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error, try again later"})
 		return
 	}
 
-	c.JSON(http.StatusOK, res)
+	// sse headers
+	// ===== SSE HEADERS =====
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+
+	writer := &sseWriter{
+		w:       c.Writer,
+		flusher: flusher,
+	}
+
+	h.executor.Execute(c.Request.Context(), req.ToModel(), writer)
 }

@@ -3,15 +3,19 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/bytedance/gopkg/util/logger"
-	"github.com/diyor200/code-compiler/internal/domain"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/bytedance/gopkg/util/logger"
+	"github.com/diyor200/code-compiler/internal/domain"
+	"github.com/diyor200/code-compiler/pkg/linewriter"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 type UseCase struct {
@@ -26,21 +30,21 @@ func New(client *client.Client, config domain.ExecutorConfig) *UseCase {
 	}
 }
 
-func (u *UseCase) Execute(ctx context.Context, data domain.ExecuteRequest) domain.ExecutionResult {
+func (u *UseCase) Execute(ctx context.Context, data domain.ExecuteRequest, writer domain.StreamWriter) {
 	startTime := time.Now()
 
 	langConfig, ok := domain.LanguageConfigs[data.Language]
 	if !ok {
-		return domain.ExecutionResult{
-			Error: fmt.Errorf("language %s not supported", data.Language),
-		}
+		writer.Error(fmt.Errorf("language %s not supported", data.Language))
+		return
 	}
 
 	// create temp dir for the code
 	tempDir, err := os.MkdirTemp("", "code-exec-*")
 	if err != nil {
 		logger.Error("failed to create temp dir:", err)
-		return domain.ExecutionResult{Error: fmt.Errorf("failed to create temp dir: %w", err)}
+		writer.Error(fmt.Errorf("failed to create temp dir: %w", err))
+		return
 	}
 	defer os.RemoveAll(tempDir)
 
@@ -48,35 +52,33 @@ func (u *UseCase) Execute(ctx context.Context, data domain.ExecuteRequest) domai
 	codePath := filepath.Join(tempDir, langConfig.FileName)
 	if err = os.WriteFile(codePath, []byte(data.Code), 0644); err != nil {
 		logger.Error("failed to write code:", err)
-		return domain.ExecutionResult{Error: fmt.Errorf("failed to write code: %w", err)}
+		writer.Error(fmt.Errorf("failed to write code: %w", err))
+		return
 	}
 
 	// pull image if needed
 	if err = u.pullImageIfNotExist(ctx, langConfig.Image); err != nil {
 		logger.Error("failed to pull image:", err)
-		return domain.ExecutionResult{Error: fmt.Errorf("failed to pull image: %w", err)}
+		writer.Error(fmt.Errorf("failed to pull image: %w", err))
+		return
 	}
 
+	cmd := langConfig.RunCmd
 	// compile if needed
 	if langConfig.NeedsCompile {
-		compileResult := u.runContainer(ctx, langConfig.Image, langConfig.CompileCmd, tempDir, "")
-		if compileResult.Error != nil {
-			return compileResult
-		}
-		if compileResult.ExitCode != 0 {
-			return domain.ExecutionResult{
-				Stderr:   compileResult.Stderr,
-				Error:    fmt.Errorf("compilation failed"),
-				ExitCode: compileResult.ExitCode,
-			}
+		cmd = []string{
+			"sh", "-c",
+			fmt.Sprintf("%s && %s",
+				joinCmd(langConfig.CompileCmd),
+				joinCmd(langConfig.RunCmd),
+			),
 		}
 	}
 
 	// execute code
-	result := u.runContainer(ctx, langConfig.Image, langConfig.RunCmd, tempDir, data.Stdin)
-	result.ExecutionTime = time.Since(startTime).Seconds()
-
-	return result
+	u.runContainer(ctx, langConfig.Image, cmd, tempDir, data.Stdin, writer)
+	executionTime := time.Since(startTime).Seconds()
+	fmt.Println("execution time: ", executionTime)
 }
 
 func (u *UseCase) pullImageIfNotExist(ctx context.Context, image string) error {
@@ -98,9 +100,11 @@ func (u *UseCase) pullImageIfNotExist(ctx context.Context, image string) error {
 }
 
 // runContainer container configuration with resource limits
-func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string, volumePath, stdin string) domain.ExecutionResult {
+func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
+	volumePath, stdin string, writer domain.StreamWriter) {
 	containerConfig := &container.Config{
 		Image:           image,
+		WorkingDir:      "/app",
 		Cmd:             cmd,
 		Tty:             false,
 		AttachStdin:     stdin != "",
@@ -120,7 +124,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string, 
 			Memory:    u.config.MemoryLimit,
 			CPUQuota:  u.config.CPUQuota,
 			CPUPeriod: 100000,
-			PidsLimit: func() *int64 { v := int64(50); return &v }(), // Limit processes,
+			PidsLimit: func() *int64 { v := int64(64); return &v }(), // Limit processes,
 		},
 	}
 
@@ -128,7 +132,8 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string, 
 	resp, err := u.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
 		logger.Error("failed to create container:", err)
-		return domain.ExecutionResult{Error: fmt.Errorf("failed to create container: %w", err)}
+		writer.Error(fmt.Errorf("failed to create container: %w", err))
+		return
 	}
 
 	// Attach to container for stdin/stdout/stderr
@@ -140,7 +145,8 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string, 
 	})
 	if err != nil {
 		logger.Error("failed to attach container:", err)
-		return domain.ExecutionResult{Error: fmt.Errorf("failed to attach container: %w", err)}
+		writer.Error(fmt.Errorf("failed to attach container: %w", err))
+		return
 	}
 	defer attachResp.Close()
 
@@ -155,36 +161,46 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string, 
 	// Start container
 	if err = u.client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
 		logger.Error("failed to start container:", err)
-		return domain.ExecutionResult{Error: fmt.Errorf("failed to start container: %w", err)}
+		writer.Error(fmt.Errorf("failed to start container: %w", err))
+		return
 	}
 
-	// read output
-	stdout, stder := u.readOutput(attachResp.Conn)
+	done := make(chan struct{})
+
+	// stream output
+	go func() {
+		defer close(done)
+		stdout := linewriter.NewLinewriter(writer.Stdout)
+		stderr := linewriter.NewLinewriter(writer.Stderr)
+
+		_, err := stdcopy.StdCopy(stdout, stderr, attachResp.Reader)
+		if err != nil && err != io.EOF {
+			logger.Errorf("stream error: %v", err)
+			writer.Error(fmt.Errorf("stream error: %w", err))
+		}
+	}()
 
 	// wait to container finish
 	statusCh, errCh := u.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+
+	var status container.WaitResponse
+
 	select {
 	case err = <-errCh:
 		if err != nil {
 			logger.Error("failed to wait for container:", err)
-			return domain.ExecutionResult{Error: fmt.Errorf("failed to wait for container: %w", err)}
+			writer.Error(fmt.Errorf("failed to wait for container: %w", err))
 		}
-	case status := <-statusCh:
-		return domain.ExecutionResult{
-			Stdout:   stdout,
-			Stderr:   stder,
-			ExitCode: int(status.StatusCode),
-		}
+	case status = <-statusCh:
 	case <-ctx.Done():
-		// timeout force kill containers
-		u.client.ContainerKill(ctx, resp.ID, "SIGKILL")
-		return domain.ExecutionResult{
-			Stderr: "execution timeout exceeded",
-			Error:  fmt.Errorf("execution timeout exceeded"),
-		}
+		_ = u.client.ContainerKill(ctx, resp.ID, "SIGKILL")
+		<-done
+		writer.Error(fmt.Errorf("execution timeout"))
+		return
 	}
+	<-done
 
-	return domain.ExecutionResult{Error: fmt.Errorf("unexpected error")}
+	writer.Done(int(status.StatusCode))
 }
 
 func (u *UseCase) readOutput(reader io.Reader) (string, string) {
@@ -220,4 +236,8 @@ func (u *UseCase) readOutput(reader io.Reader) (string, string) {
 	}
 
 	return stdout, stderr
+}
+
+func joinCmd(cmd []string) string {
+	return strings.Join(cmd, " ")
 }
