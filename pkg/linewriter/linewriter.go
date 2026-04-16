@@ -22,7 +22,7 @@ func (w *linewriter) Write(p []byte) (int, error) {
 	for {
 		line, err := w.buf.ReadString('\n')
 		if err != nil {
-			return 0, err
+			break
 		}
 
 		w.fn(strings.TrimRight(line, "\n"))
