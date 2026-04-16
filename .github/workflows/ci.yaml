@@ -38,6 +38,7 @@ jobs:
   docker:
     runs-on: ubuntu-22.04
     needs: build
+    environment: Prod
 
     steps:
       - name: Checkout code
