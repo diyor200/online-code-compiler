@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+
 	"github.com/diyor200/code-compiler/internal/domain"
 
 	"github.com/diyor200/code-compiler/internal/config"
@@ -27,5 +28,5 @@ func NewHandler(engine *gin.Engine, conf *config.Config, executor Executor) *Han
 }
 
 type Executor interface {
-	Execute(ctx context.Context, data domain.ExecuteRequest) domain.ExecutionResult
+	Execute(ctx context.Context, data domain.ExecuteRequest, writer domain.StreamWriter)
 }

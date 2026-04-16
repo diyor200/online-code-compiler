@@ -16,3 +16,10 @@ type ExecutionResult struct {
 	ExecutionTime float64
 	Error         error
 }
+
+type StreamWriter interface {
+	Stdout(line string)
+	Stderr(line string)
+	Error(err error)
+	Done(code int)
+}
