@@ -59,6 +59,6 @@ jobs:
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          tags:
+          tags: |
               ${{ secrets.DOCKER_USERNAME }}/online-compiler:latest
               ${{ secrets.DOCKER_USERNAME }}/online-compiler:${{ github.sha }}
