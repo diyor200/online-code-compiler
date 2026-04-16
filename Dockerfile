@@ -14,7 +14,7 @@ FROM alpine:3.19
 
 WORKDIR /app
 
-COPY --from=builder compiler .
+COPY --from=builder /app/compiler .
 
 RUN apk add --no-cache ca-certificates
 
