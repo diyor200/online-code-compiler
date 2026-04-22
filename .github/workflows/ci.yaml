@@ -92,4 +92,4 @@ jobs:
               -e HTTP_PORT=${{ secrets.HTTP_PORT }} \
               -e HTTP_HOST=${{ secrets.HTTP_HOST }} \
               -v /var/run/docker.sock:/var/run/docker.sock \
-              online-compiler:latest
+              ${{ secrets.DOCKER_USERNAME }}/online-compiler:latest
