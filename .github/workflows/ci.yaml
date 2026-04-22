@@ -76,8 +76,8 @@ jobs:
           username: ${{ secrets.AWS_USER }}
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
-            echo "Login to Docker ..." \
-            echo ${{ secrets.DOCKER_ACCESS_TOKEN }} | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin \
+            echo "Login to Docker ..."
+            echo "${{ secrets.DOCKER_ACCESS_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
             
             echo "Pulling the latest image ..."
             docker pull ${{ secrets.DOCKER_USERNAME }}/online-compiler:latest
@@ -89,6 +89,7 @@ jobs:
             echo "Launching container ..."
             docker run --name online-compiler \
               -p ${{ secrets.HTTP_PORT }}:${{ secrets.HTTP_PORT }} \
-              -e ${{ secrets.HTTP_HOST }} \
-              -v /var/run/docker.sock:/var/run/docker.sock
-              online-compile:latest
+              -e HTTP_PORT=${{ secrets.HTTP_PORT }} \
+              -e HTTP_HOST=${{ secrets.HTTP_HOST }} \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              online-compiler:latest
