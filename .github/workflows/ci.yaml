@@ -87,7 +87,7 @@ jobs:
             docker rm online-compiler || true
             
             echo "Launching container ..."
-            docker run --name online-compiler \
+            docker run -d --name online-compiler \
               -p ${{ secrets.HTTP_PORT }}:${{ secrets.HTTP_PORT }} \
               -e HTTP_PORT=${{ secrets.HTTP_PORT }} \
               -e HTTP_HOST=${{ secrets.HTTP_HOST }} \
