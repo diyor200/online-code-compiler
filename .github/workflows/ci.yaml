@@ -62,3 +62,33 @@ jobs:
           tags: |
               ${{ secrets.DOCKER_USERNAME }}/online-compiler:latest
               ${{ secrets.DOCKER_USERNAME }}/online-compiler:${{ github.sha }}
+
+  deploy:
+    runs-on: ubuntu-22.04
+    needs: docker
+    environment: Prod
+
+    steps:
+      - name: Deploy to AWS via ssh
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USER }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            echo "Login to Docker ..." \
+            echo ${{ secrets.DOCKER_ACCESS_TOKEN }} | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin \
+            
+            echo "Pulling the latest image ..."
+            docker pull ${{ secrets.DOCKER_USERNAME }}/online-compiler:latest
+            
+            echo "Removing running container ..."
+            docker stop online-compiler || true
+            docker rm online-compiler || true
+            
+            echo "Launching container ..."
+            docker run --name online-compiler \
+              -p ${{ secrets.HTTP_PORT }}:${{ secrets.HTTP_PORT }} \
+              -e ${{ secrets.HTTP_HOST }} \
+              -v /var/run/docker.sock:/var/run/docker.sock
+              online-compile:latest
