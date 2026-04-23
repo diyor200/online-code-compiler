@@ -1,0 +1,50 @@
+basePath: /
+definitions:
+  scheme.LanguageSettings:
+    properties:
+      languages:
+        items:
+          type: string
+        type: array
+    type: object
+info:
+  contact: {}
+  description: API for executing code online
+  title: Online Code Compiler
+  version: v1.0.3
+paths:
+  /api/v1/execute:
+    get:
+      description: Execute Code
+      parameters:
+      - in: query
+        name: code
+        required: true
+        type: string
+      - in: query
+        name: language
+        required: true
+        type: string
+      - in: query
+        name: stdin
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+      summary: Execute Code
+  /api/v1/languages:
+    get:
+      description: Get supported languages
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/scheme.LanguageSettings'
+      summary: Get supported languages
+swagger: "2.0"
