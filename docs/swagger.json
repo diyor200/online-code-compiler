@@ -1,0 +1,78 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "API for executing code online",
+        "title": "Online Code Compiler",
+        "contact": {},
+        "version": "v1.0.3"
+    },
+    "basePath": "/",
+    "paths": {
+        "/api/v1/execute": {
+            "get": {
+                "description": "Execute Code",
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Execute Code",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "name": "language",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "name": "stdin",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    }
+                }
+            }
+        },
+        "/api/v1/languages": {
+            "get": {
+                "description": "Get supported languages",
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Get supported languages",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/scheme.LanguageSettings"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "scheme.LanguageSettings": {
+            "type": "object",
+            "properties": {
+                "languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    }
+}

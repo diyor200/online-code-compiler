@@ -7,6 +7,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// executeCode godoc
+// @Summary Execute Code
+// @Description Execute Code
+// @Param request query scheme.ExecuteRequest true "execute request"
+// @Produce json
+// @Success 200
+// @Failure 400
+// @Router /api/v1/execute [GET]
 func (h *Handler) executeCode(c *gin.Context) {
 	var req scheme.ExecuteRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
