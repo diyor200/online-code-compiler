@@ -1,6 +1,6 @@
 package domain
 
-var SupportedLangs = []string{"go", "python", "JavaScript", "java", "cpp", "c"}
+var SupportedLangs = []string{"go", "python", "javaScript", "java", "cpp", "c"}
 
 type LanguageConfig struct {
 	Image        string
