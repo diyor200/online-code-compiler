@@ -2,11 +2,13 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bytedance/gopkg/util/logger"
@@ -16,7 +18,10 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/google/uuid"
 )
+
+var tasks = sync.Map{}
 
 type UseCase struct {
 	client *client.Client
@@ -30,8 +35,28 @@ func New(client *client.Client, config domain.ExecutorConfig) *UseCase {
 	}
 }
 
-func (u *UseCase) Execute(ctx context.Context, data domain.ExecuteRequest, writer domain.StreamWriter) {
+func (u *UseCase) CreateTask(ctx context.Context, data domain.ExecuteRequest) (string, error) {
+	taskID := uuid.NewString()
+	tasks.Store(taskID, data)
+
+	return taskID, nil
+}
+
+func (u *UseCase) Execute(ctx context.Context, taskID string, writer domain.StreamWriter) {
 	startTime := time.Now()
+
+	taskData, ok := tasks.Load(taskID)
+	if !ok {
+		writer.Error(fmt.Errorf("task not found"))
+		return
+	}
+
+	data, ok := taskData.(domain.ExecuteRequest)
+	if !ok {
+		logger.Error("failed to convert task to domain")
+		writer.Error(errors.New("internal server error"))
+		return
+	}
 
 	langConfig, ok := domain.LanguageConfigs[data.Language]
 	if !ok {
@@ -116,7 +141,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	}
 
 	hostConfig := &container.HostConfig{
-		AutoRemove:     true,
+		AutoRemove:     false,
 		ReadonlyRootfs: false,
 		SecurityOpt:    []string{"no-new-privileges"},
 		Binds:          []string{fmt.Sprintf("%s:/app", volumePath)},
@@ -135,6 +160,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 		writer.Error(fmt.Errorf("failed to create container: %w", err))
 		return
 	}
+	defer u.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
 
 	// Attach to container for stdin/stdout/stderr
 	attachResp, err := u.client.ContainerAttach(ctx, resp.ID, types.ContainerAttachOptions{
@@ -150,7 +176,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	}
 	defer attachResp.Close()
 
-	//Write stdin if provided
+	// Write stdin if provided
 	if stdin != "" {
 		go func() {
 			attachResp.Conn.Write([]byte(stdin))
@@ -178,6 +204,9 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 			logger.Errorf("stream error: %v", err)
 			writer.Error(fmt.Errorf("stream error: %w", err))
 		}
+
+		stdout.Flush()
+		stderr.Flush()
 	}()
 
 	// wait to container finish
@@ -193,7 +222,8 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 		}
 	case status = <-statusCh:
 	case <-ctx.Done():
-		_ = u.client.ContainerKill(ctx, resp.ID, "SIGKILL")
+		killCtx := context.Background() // don't use cancelled ctx
+		_ = u.client.ContainerKill(killCtx, resp.ID, "SIGKILL")
 		<-done
 		writer.Error(fmt.Errorf("execution timeout"))
 		return
@@ -201,41 +231,6 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	<-done
 
 	writer.Done(int(status.StatusCode))
-}
-
-func (u *UseCase) readOutput(reader io.Reader) (string, string) {
-	var stdout, stderr string
-	buf := make([]byte, 8192)
-
-	for {
-		n, err := reader.Read(buf)
-		if err != nil {
-			break
-		}
-
-		if n < 8 {
-			continue
-		}
-
-		// docker multiplexes stdout/stderr
-		// first 8 bytes: header (stream type + size)
-		streamType := buf[0]
-		size := int(buf[4])<<24 | int(buf[5])<<16 | int(buf[6])<<8 | int(buf[7])
-
-		if size > len(buf)-8 {
-			size = len(buf) - 8
-		}
-
-		content := string(buf[8 : size+8])
-
-		if streamType == 1 { // stdout
-			stdout += content
-		} else if streamType == 2 { // stderr
-			stderr += content
-		}
-	}
-
-	return stdout, stderr
 }
 
 func joinCmd(cmd []string) string {

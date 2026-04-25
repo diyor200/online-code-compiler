@@ -28,5 +28,6 @@ func NewHandler(engine *gin.Engine, conf *config.Config, executor Executor) *Han
 }
 
 type Executor interface {
-	Execute(ctx context.Context, data domain.ExecuteRequest, writer domain.StreamWriter)
+	Execute(ctx context.Context, taskID string, writer domain.StreamWriter)
+	CreateTask(ctx context.Context, data domain.ExecuteRequest) (string, error)
 }

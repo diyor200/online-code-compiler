@@ -1,3 +1,5 @@
+![architecture](photos/arch.png)
+
 # Go Code Executor API
 
 A lightweight **code execution API** written in Go. Supports multiple languages (Go, Python, JavaScript) and executes code safely inside a **Docker container pool**.

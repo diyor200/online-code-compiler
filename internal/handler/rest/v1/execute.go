@@ -7,17 +7,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// executeCode godoc
-// @Summary Execute Code
-// @Description Execute Code
-// @Param request query scheme.ExecuteRequest true "execute request"
+// createTask godoc
+// @Summary Create Task
+// @Description Create Task
+// @Param request body scheme.ExecuteRequest true "execute request"
 // @Produce json
-// @Success 200
-// @Failure 400
-// @Router /api/v1/execute [GET]
-func (h *Handler) executeCode(c *gin.Context) {
-	var req scheme.ExecuteRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
+// @Success 201
+// @Failure 500
+// @Router /api/v1/task [POST]
+func (h *Handler) createTask(c *gin.Context) {
+	var (
+		req scheme.ExecuteRequest
+		err error
+	)
+	if err = c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -33,6 +36,31 @@ func (h *Handler) executeCode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Input exceeds maximum length of 10KB",
 		})
+		return
+	}
+
+	taskID, err := h.executor.CreateTask(c.Request.Context(), req.ToModel())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, scheme.ExecuteResponseV2{TaskID: taskID})
+
+}
+
+// getTaskResult godoc
+// @Summary Get task result
+// @Description Get task result
+// @Param task_id path string true "task_id"
+// @Produce json
+// @Success 200
+// @Failure 400
+// @Router /api/v1/task/:id [GET]
+func (h *Handler) getTaskResult(c *gin.Context) {
+	taskID := c.Param("id")
+	if taskID == "" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "task_id is required"})
 		return
 	}
 
@@ -53,5 +81,5 @@ func (h *Handler) executeCode(c *gin.Context) {
 		flusher: flusher,
 	}
 
-	h.executor.Execute(c.Request.Context(), req.ToModel(), writer)
+	h.executor.Execute(c.Request.Context(), taskID, writer)
 }

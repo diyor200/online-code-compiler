@@ -1,6 +1,6 @@
 package domain
 
-var SupportedLangs = []string{"go", "python", "JavaScript", "java", "cpp", "c"}
+var SupportedLangs = []string{"go", "python", "javascript", "java", "cpp", "c"}
 
 type LanguageConfig struct {
 	Image        string
@@ -14,7 +14,7 @@ type LanguageConfig struct {
 var LanguageConfigs = map[string]LanguageConfig{
 	"python": {
 		Image:        "python:3.11-alpine",
-		RunCmd:       []string{"python", "/app/main.py"},
+		RunCmd:       []string{"python", "-u", "/app/main.py"},
 		FileExt:      ".py",
 		FileName:     "main.py",
 		NeedsCompile: false,
@@ -51,7 +51,7 @@ var LanguageConfigs = map[string]LanguageConfig{
 		NeedsCompile: true,
 	},
 	"c": {
-		Image:        "gcc:13-alpine",
+		Image:        "gcc:13",
 		CompileCmd:   []string{"gcc", "-o", "/app/program", "/app/main.c"},
 		RunCmd:       []string{"/app/program"},
 		FileExt:      ".c",

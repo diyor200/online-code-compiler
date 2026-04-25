@@ -11,8 +11,7 @@ type sseWriter struct {
 }
 
 func (w *sseWriter) send(event, data string) {
-	fmt.Fprintf(w.w, "event: %s\n", event)
-	fmt.Fprintf(w.w, "data: %s\n", data)
+	fmt.Fprintf(w.w, "event: %s\ndata: %s\n\n", event, data)
 	w.flusher.Flush()
 }
 

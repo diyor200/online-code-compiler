@@ -30,3 +30,10 @@ func (w *linewriter) Write(p []byte) (int, error) {
 
 	return len(p), nil
 }
+
+func (w *linewriter) Flush() {
+	if w.buf.Len() > 0 {
+		w.fn(w.buf.String())
+		w.buf.Reset()
+	}
+}
