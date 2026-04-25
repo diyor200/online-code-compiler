@@ -2,11 +2,13 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bytedance/gopkg/util/logger"
@@ -16,7 +18,10 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/google/uuid"
 )
+
+var tasks = sync.Map{}
 
 type UseCase struct {
 	client *client.Client
@@ -30,8 +35,28 @@ func New(client *client.Client, config domain.ExecutorConfig) *UseCase {
 	}
 }
 
-func (u *UseCase) Execute(ctx context.Context, data domain.ExecuteRequest, writer domain.StreamWriter) {
+func (u *UseCase) CreateTask(ctx context.Context, data domain.ExecuteRequest) (string, error) {
+	taskID := uuid.NewString()
+	tasks.Store(taskID, data)
+
+	return taskID, nil
+}
+
+func (u *UseCase) Execute(ctx context.Context, taskID string, writer domain.StreamWriter) {
 	startTime := time.Now()
+
+	taskData, ok := tasks.Load(taskID)
+	if !ok {
+		writer.Error(fmt.Errorf("task not found"))
+		return
+	}
+
+	data, ok := taskData.(domain.ExecuteRequest)
+	if !ok {
+		logger.Error("failed to convert task to domain")
+		writer.Error(errors.New("internal server error"))
+		return
+	}
 
 	langConfig, ok := domain.LanguageConfigs[data.Language]
 	if !ok {
@@ -116,7 +141,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	}
 
 	hostConfig := &container.HostConfig{
-		AutoRemove:     true,
+		AutoRemove:     false,
 		ReadonlyRootfs: false,
 		SecurityOpt:    []string{"no-new-privileges"},
 		Binds:          []string{fmt.Sprintf("%s:/app", volumePath)},
@@ -135,6 +160,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 		writer.Error(fmt.Errorf("failed to create container: %w", err))
 		return
 	}
+	defer u.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
 
 	// Attach to container for stdin/stdout/stderr
 	attachResp, err := u.client.ContainerAttach(ctx, resp.ID, types.ContainerAttachOptions{
@@ -150,7 +176,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	}
 	defer attachResp.Close()
 
-	//Write stdin if provided
+	// Write stdin if provided
 	if stdin != "" {
 		go func() {
 			attachResp.Conn.Write([]byte(stdin))
@@ -196,7 +222,8 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 		}
 	case status = <-statusCh:
 	case <-ctx.Done():
-		_ = u.client.ContainerKill(ctx, resp.ID, "SIGKILL")
+		killCtx := context.Background() // don't use cancelled ctx
+		_ = u.client.ContainerKill(killCtx, resp.ID, "SIGKILL")
 		<-done
 		writer.Error(fmt.Errorf("execution timeout"))
 		return

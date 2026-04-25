@@ -15,42 +15,6 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/api/v1/execute": {
-            "get": {
-                "description": "Execute Code",
-                "produces": [
-                    "application/json"
-                ],
-                "summary": "Execute Code",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "name": "code",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "name": "language",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "name": "stdin",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    },
-                    "400": {
-                        "description": "Bad Request"
-                    }
-                }
-            }
-        },
         "/api/v1/languages": {
             "get": {
                 "description": "Get supported languages",
@@ -67,9 +31,81 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/v1/task": {
+            "post": {
+                "description": "Create Task",
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Create Task",
+                "parameters": [
+                    {
+                        "description": "execute request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/scheme.ExecuteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/api/v1/task/:id": {
+            "get": {
+                "description": "Get task result",
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Get task result",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "task_id",
+                        "name": "task_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "scheme.ExecuteRequest": {
+            "type": "object",
+            "required": [
+                "code",
+                "language"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "language": {
+                    "type": "string"
+                },
+                "stdin": {
+                    "type": "string"
+                }
+            }
+        },
         "scheme.LanguageSettings": {
             "type": "object",
             "properties": {

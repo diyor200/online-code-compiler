@@ -6,6 +6,7 @@ import (
 	"github.com/diyor200/code-compiler/internal/config"
 	v1 "github.com/diyor200/code-compiler/internal/handler/rest/v1"
 	"github.com/docker/docker/client"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"log"
 )
@@ -33,6 +34,14 @@ func Run() {
 	usecases := NewUseCaseBuilder(dockerClient)
 
 	server := gin.Default()
+	// set cors middleware
+	server.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"}, // or your frontend URL
+		AllowMethods:     []string{"GET", "POST", "OPTIONS"},
+		AllowHeaders:     []string{"Content-Type"},
+		AllowCredentials: true,
+	}))
+
 	handler := v1.NewHandler(server, cfg, usecases.executor)
 
 	if err = handler.Engine.Run(fmt.Sprintf("%s:%s", cfg.HttpHost, cfg.HttpPort)); err != nil {

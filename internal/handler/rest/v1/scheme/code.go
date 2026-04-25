@@ -3,9 +3,9 @@ package scheme
 import "github.com/diyor200/code-compiler/internal/domain"
 
 type ExecuteRequest struct {
-	Language string `form:"language" binding:"required"`
-	Code     string `form:"code" binding:"required"`
-	Stdin    string `form:"stdin"`
+	Language string `json:"language" binding:"required"`
+	Code     string `json:"code" binding:"required"`
+	Stdin    string `json:"stdin"`
 }
 
 // ExecuteResponse represents the API response
@@ -14,6 +14,10 @@ type ExecuteResponse struct {
 	Stderr        string  `json:"stderr"`
 	ExitCode      int     `json:"exitCode"`
 	ExecutionTime float64 `json:"executionTime"`
+}
+
+type ExecuteResponseV2 struct {
+	TaskID string `json:"task_id"`
 }
 
 func (c *ExecuteRequest) ToModel() domain.ExecuteRequest {

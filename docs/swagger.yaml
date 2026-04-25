@@ -1,5 +1,17 @@
 basePath: /
 definitions:
+  scheme.ExecuteRequest:
+    properties:
+      code:
+        type: string
+      language:
+        type: string
+      stdin:
+        type: string
+    required:
+    - code
+    - language
+    type: object
   scheme.LanguageSettings:
     properties:
       languages:
@@ -13,29 +25,6 @@ info:
   title: Online Code Compiler
   version: v1.0.3
 paths:
-  /api/v1/execute:
-    get:
-      description: Execute Code
-      parameters:
-      - in: query
-        name: code
-        required: true
-        type: string
-      - in: query
-        name: language
-        required: true
-        type: string
-      - in: query
-        name: stdin
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-        "400":
-          description: Bad Request
-      summary: Execute Code
   /api/v1/languages:
     get:
       description: Get supported languages
@@ -47,4 +36,39 @@ paths:
           schema:
             $ref: '#/definitions/scheme.LanguageSettings'
       summary: Get supported languages
+  /api/v1/task:
+    post:
+      description: Create Task
+      parameters:
+      - description: execute request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/scheme.ExecuteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+        "500":
+          description: Internal Server Error
+      summary: Create Task
+  /api/v1/task/:id:
+    get:
+      description: Get task result
+      parameters:
+      - description: task_id
+        in: path
+        name: task_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+      summary: Get task result
 swagger: "2.0"
