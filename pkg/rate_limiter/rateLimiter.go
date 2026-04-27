@@ -18,10 +18,10 @@ type rateLimiter struct {
 	burst    int
 }
 
-func NewRateLimiter(rate rate.Limit, burst int) RateLimiter {
+func NewRateLimiter(r rate.Limit, burst int) RateLimiter {
 	return &rateLimiter{
 		limiters: make(map[string]*rate.Limiter),
-		rate:     rate,
+		rate:     r,
 		burst:    burst,
 	}
 }
