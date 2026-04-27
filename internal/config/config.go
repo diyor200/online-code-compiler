@@ -6,8 +6,9 @@ import (
 )
 
 type Config struct {
-	HttpHost string `env:"HTTP_HOST,required"`
-	HttpPort string `env:"HTTP_PORT,required"`
+	Environment string `env:"ENVIRONMENT,required"`
+	HttpHost    string `env:"HTTP_HOST,required"`
+	HttpPort    string `env:"HTTP_PORT,required"`
 }
 
 func NewConfig() (*Config, error) {
