@@ -58,6 +58,9 @@ func (u *UseCase) Execute(ctx context.Context, taskID string, writer domain.Stre
 		return
 	}
 
+	// remove task
+	tasks.Delete(taskID)
+
 	langConfig, ok := domain.LanguageConfigs[data.Language]
 	if !ok {
 		writer.Error(fmt.Errorf("language %s not supported", data.Language))

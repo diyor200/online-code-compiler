@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"github.com/diyor200/code-compiler/internal/config"
 	v1 "github.com/diyor200/code-compiler/internal/handler/rest/v1"
+	"github.com/diyor200/code-compiler/pkg/rate_limiter"
 	"github.com/docker/docker/client"
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 	"log"
 )
 
@@ -35,14 +36,12 @@ func Run() {
 
 	server := gin.Default()
 	// set cors middleware
-	server.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"}, // or your frontend URL
-		AllowMethods:     []string{"GET", "POST", "OPTIONS"},
-		AllowHeaders:     []string{"Content-Type"},
-		AllowCredentials: true,
-	}))
 
-	handler := v1.NewHandler(server, cfg, usecases.executor)
+	// set rate limiter. 10 requests per minute
+	rateLimiter := rate_limiter.NewRateLimiter(rate.Limit(10.0/60.0), 5)
+	rateLimiter.CleanUp()
+
+	handler := v1.NewHandler(server, cfg, usecases.executor, rateLimiter)
 
 	if err = handler.Engine.Run(fmt.Sprintf("%s:%s", cfg.HttpHost, cfg.HttpPort)); err != nil {
 		panic(err)
