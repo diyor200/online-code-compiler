@@ -12,8 +12,7 @@ func (h *Handler) rateLimitMiddleware() gin.HandlerFunc {
 		rateLimiter := h.rateLimiter.GetLimiter(ip)
 
 		if !rateLimiter.Allow() {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded, try again later."})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded, try again after 6 seconds"})
 			return
 		}
 
@@ -27,6 +26,6 @@ func (h *Handler) corsMiddleware() gin.HandlerFunc {
 		AllowOrigins:     []string{"*"}, // or your frontend URL
 		AllowMethods:     []string{"GET", "POST", "OPTIONS"},
 		AllowHeaders:     []string{"Content-Type"},
-		AllowCredentials: true,
+		AllowCredentials: false,
 	})
 }
