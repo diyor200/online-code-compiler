@@ -30,13 +30,8 @@ func NewHandler(
 		rateLimiter: rateLimiter,
 	}
 
+	h.Engine.Use(h.corsMiddleware())
 	h.RegisterRoutes()
-	h.corsMiddleware()
-
-	// use rate limiter middleware in production
-	if conf.Environment == domain.EnvProduction {
-		h.Engine.Use(h.rateLimitMiddleware())
-	}
 
 	return h
 }

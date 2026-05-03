@@ -15,8 +15,14 @@ func (h *Handler) RegisterRoutes() {
 	h.Engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	v1 := h.Engine.Group("/api/v1")
 
-	v1.GET("/languages", h.getSupportedLanguages)
-	v1.POST("/task", h.createTask)
+	// rate limited routes
+	limited := v1.Group("/")
+	limited.Use(h.rateLimitMiddleware())
+	{
+		limited.GET("/languages", h.getSupportedLanguages)
+		limited.POST("/task", h.createTask)
+	}
+	
 	v1.GET("/task/:id", h.getTaskResult)
 }
 
