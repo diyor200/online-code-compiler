@@ -91,5 +91,6 @@ jobs:
               -p ${{ secrets.HTTP_PORT }}:${{ secrets.HTTP_PORT }} \
               -e HTTP_PORT=${{ secrets.HTTP_PORT }} \
               -e HTTP_HOST=${{ secrets.HTTP_HOST }} \
+              -e ENVIRONMENT=${{ secrets.ENVIRONMENT }} \
               -v /var/run/docker.sock:/var/run/docker.sock \
               ${{ secrets.DOCKER_USERNAME }}/online-compiler:latest
