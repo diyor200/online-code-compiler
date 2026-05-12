@@ -3,13 +3,15 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"log"
+
 	"github.com/diyor200/code-compiler/internal/config"
 	v1 "github.com/diyor200/code-compiler/internal/handler/rest/v1"
+	"github.com/diyor200/code-compiler/pkg/metrics"
 	"github.com/diyor200/code-compiler/pkg/rate_limiter"
 	"github.com/docker/docker/client"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
-	"log"
 )
 
 func Run() {
@@ -17,6 +19,9 @@ func Run() {
 	if err != nil {
 		panic(err)
 	}
+
+	//  register metrics
+	metrics.RegisterMetrics()
 
 	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {

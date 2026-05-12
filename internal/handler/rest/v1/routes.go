@@ -8,10 +8,12 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func (h *Handler) RegisterRoutes() {
 	h.Engine.GET("/health", h.healthCheck)
+	h.Engine.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	h.Engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	v1 := h.Engine.Group("/api/v1")
 
@@ -22,7 +24,7 @@ func (h *Handler) RegisterRoutes() {
 		limited.GET("/languages", h.getSupportedLanguages)
 		limited.POST("/task", h.createTask)
 	}
-	
+
 	v1.GET("/task/:id", h.getTaskResult)
 }
 

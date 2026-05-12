@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/volume"
 	"io"
 	"os"
 	"strings"
@@ -15,8 +13,11 @@ import (
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/diyor200/code-compiler/internal/domain"
 	"github.com/diyor200/code-compiler/pkg/linewriter"
+	"github.com/diyor200/code-compiler/pkg/metrics"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/google/uuid"
@@ -73,9 +74,13 @@ func (u *UseCase) Execute(ctx context.Context, taskID string, writer domain.Stre
 		return
 	}
 
+	// inc active tasks
+	metrics.ActiveExecutions.Inc()
+	defer metrics.ActiveExecutions.Dec()
+
 	switch {
 	case !langConfig.NeedsCompile:
-		u.runInterpreted(ctx, langConfig, data, writer)
+		u.runInterpreted(ctx, langConfig, data, writer, data.Language)
 	case langConfig.StdinCompile:
 		u.runCompiledStdin(ctx, langConfig, data, writer) // C, C++ — next step
 	default:
@@ -83,6 +88,8 @@ func (u *UseCase) Execute(ctx context.Context, taskID string, writer domain.Stre
 	}
 
 	executionTime := time.Since(startTime).Seconds()
+	metrics.ExecutionDuration.WithLabelValues(data.Language).Observe(executionTime)
+
 	logger.Infof("execution time: %.2fs", executionTime)
 }
 
@@ -105,13 +112,13 @@ func (u *UseCase) pullImageIfNotExist(ctx context.Context, image string) error {
 }
 
 func (u *UseCase) runInterpreted(ctx context.Context, config domain.LanguageConfig,
-	req domain.ExecuteRequest, writer domain.StreamWriter) {
+	req domain.ExecuteRequest, writer domain.StreamWriter, language string) {
 	// copy slice to avoid data race on shared global config
 	cmd := make([]string, len(config.RunCmd))
 	copy(cmd, config.RunCmd)
 	cmd[len(cmd)-1] = req.Code
 
-	u.runContainer(ctx, config.Image, cmd, req.Stdin, writer)
+	u.runContainer(ctx, config.Image, cmd, req.Stdin, writer, language)
 }
 
 func (u *UseCase) runCompiledStdin(ctx context.Context, config domain.LanguageConfig, req domain.ExecuteRequest, writer domain.StreamWriter) {
@@ -122,21 +129,24 @@ func (u *UseCase) runCompiledStdin(ctx context.Context, config domain.LanguageCo
 	_, err := u.client.VolumeCreate(ctx, volume.CreateOptions{Name: volumeName})
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to create volume: %w", err))
+		metrics.TotalExecutions.WithLabelValues(req.Language, "failure").Inc()
 		return
 	}
 	defer u.client.VolumeRemove(context.Background(), volumeName, true)
 
 	// step 1: compile
-	compileSuccess := u.compileWithStdin(ctx, config, req.Code, volumeName, writer)
+	compileSuccess := u.compileWithStdin(ctx, config, req.Code, volumeName, writer, req.Language)
 	if !compileSuccess {
+		metrics.TotalExecutions.WithLabelValues(req.Language, "failure").Inc()
 		return
 	}
 
 	// step 2: run
-	u.runWithVolume(ctx, config, req.Stdin, volumeName, writer)
+	u.runWithVolume(ctx, config, req.Stdin, volumeName, writer, req.Language)
 }
 
-func (u *UseCase) compileWithStdin(ctx context.Context, config domain.LanguageConfig, code string, volumeName string, writer domain.StreamWriter) bool {
+func (u *UseCase) compileWithStdin(ctx context.Context, config domain.LanguageConfig, code string,
+	volumeName string, writer domain.StreamWriter, language string) bool {
 	containerConfig := &container.Config{
 		Image:        config.Image,
 		Cmd:          config.CompileCmd,
@@ -169,6 +179,7 @@ func (u *UseCase) compileWithStdin(ctx context.Context, config domain.LanguageCo
 	resp, err := u.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to create compile container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "failure").Inc()
 		return false
 	}
 	defer u.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
@@ -181,6 +192,7 @@ func (u *UseCase) compileWithStdin(ctx context.Context, config domain.LanguageCo
 	})
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to attach compile container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "compile").Inc()
 		return false
 	}
 	defer attachResp.Close()
@@ -191,6 +203,7 @@ func (u *UseCase) compileWithStdin(ctx context.Context, config domain.LanguageCo
 
 	if err = u.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		writer.Error(fmt.Errorf("failed to start compile container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "compile").Inc()
 		return false
 	}
 
@@ -219,6 +232,7 @@ func (u *UseCase) compileWithStdin(ctx context.Context, config domain.LanguageCo
 	case <-ctx.Done():
 		u.client.ContainerKill(context.Background(), resp.ID, "SIGKILL")
 		<-done
+		metrics.TotalExecutions.WithLabelValues(language, "timeout").Inc()
 		writer.Error(fmt.Errorf("compile timeout"))
 		return false
 	}
@@ -234,7 +248,8 @@ func (u *UseCase) compileWithStdin(ctx context.Context, config domain.LanguageCo
 	return true
 }
 
-func (u *UseCase) runWithVolume(ctx context.Context, config domain.LanguageConfig, stdin string, volumeName string, writer domain.StreamWriter) {
+func (u *UseCase) runWithVolume(ctx context.Context, config domain.LanguageConfig,
+	stdin string, volumeName string, writer domain.StreamWriter, language string) {
 	containerConfig := &container.Config{
 		Image:           config.Image,
 		Cmd:             config.RunCmd,
@@ -268,6 +283,7 @@ func (u *UseCase) runWithVolume(ctx context.Context, config domain.LanguageConfi
 	resp, err := u.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to create run container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "run").Inc()
 		return
 	}
 	defer u.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
@@ -280,6 +296,7 @@ func (u *UseCase) runWithVolume(ctx context.Context, config domain.LanguageConfi
 	})
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to attach run container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "run").Inc()
 		return
 	}
 	defer attachResp.Close()
@@ -291,6 +308,7 @@ func (u *UseCase) runWithVolume(ctx context.Context, config domain.LanguageConfi
 	}
 
 	if err = u.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		metrics.ContainerFailures.WithLabelValues(language, "run").Inc()
 		writer.Error(fmt.Errorf("failed to start run container: %w", err))
 		return
 	}
@@ -322,12 +340,14 @@ func (u *UseCase) runWithVolume(ctx context.Context, config domain.LanguageConfi
 	case <-ctx.Done():
 		u.client.ContainerKill(context.Background(), resp.ID, "SIGKILL")
 		<-done
+		metrics.TotalExecutions.WithLabelValues(language, "timeout").Inc()
 		writer.Error(fmt.Errorf("execution timeout"))
 		return
 	}
 
 	<-done
 	writer.Done(int(status.StatusCode))
+	metrics.TotalExecutions.WithLabelValues(language, "success").Inc()
 }
 
 func (u *UseCase) runCompiledTmpfs(ctx context.Context, config domain.LanguageConfig, req domain.ExecuteRequest, writer domain.StreamWriter) {
@@ -337,21 +357,24 @@ func (u *UseCase) runCompiledTmpfs(ctx context.Context, config domain.LanguageCo
 	_, err := u.client.VolumeCreate(ctx, volume.CreateOptions{Name: volumeName})
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to create volume: %w", err))
+		metrics.TotalExecutions.WithLabelValues(req.Language, "failure").Inc()
 		return
 	}
 	defer u.client.VolumeRemove(context.Background(), volumeName, true)
 
 	// step 1: compile (write code to tmpfs, compile to volume)
-	compileSuccess := u.compileWithTmpfs(ctx, config, req.Code, volumeName, writer)
+	compileSuccess := u.compileWithTmpfs(ctx, config, req.Code, volumeName, writer, req.Language)
 	if !compileSuccess {
+		metrics.TotalExecutions.WithLabelValues(req.Language, "failure").Inc()
 		return
 	}
 
 	// step 2: run binary from volume
-	u.runWithVolume(ctx, config, req.Stdin, volumeName, writer)
+	u.runWithVolume(ctx, config, req.Stdin, volumeName, writer, req.Language)
 }
 
-func (u *UseCase) compileWithTmpfs(ctx context.Context, config domain.LanguageConfig, code string, volumeName string, writer domain.StreamWriter) bool {
+func (u *UseCase) compileWithTmpfs(ctx context.Context, config domain.LanguageConfig, code string,
+	volumeName string, writer domain.StreamWriter, language string) bool {
 	// inject code as env var, entrypoint script writes it to file
 	containerConfig := &container.Config{
 		Image:        config.Image,
@@ -398,6 +421,7 @@ func (u *UseCase) compileWithTmpfs(ctx context.Context, config domain.LanguageCo
 	resp, err := u.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to create compile container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "compile").Inc()
 		return false
 	}
 	defer u.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
@@ -409,12 +433,14 @@ func (u *UseCase) compileWithTmpfs(ctx context.Context, config domain.LanguageCo
 	})
 	if err != nil {
 		writer.Error(fmt.Errorf("failed to attach compile container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "compile").Inc()
 		return false
 	}
 	defer attachResp.Close()
 
 	if err = u.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		writer.Error(fmt.Errorf("failed to start compile container: %w", err))
+		metrics.ContainerFailures.WithLabelValues(language, "compile").Inc()
 		return false
 	}
 
@@ -442,6 +468,7 @@ func (u *UseCase) compileWithTmpfs(ctx context.Context, config domain.LanguageCo
 	case <-ctx.Done():
 		u.client.ContainerKill(context.Background(), resp.ID, "SIGKILL")
 		<-done
+		metrics.TotalExecutions.WithLabelValues(language, "timeout").Inc()
 		writer.Error(fmt.Errorf("compile timeout"))
 		return false
 	}
@@ -458,7 +485,7 @@ func (u *UseCase) compileWithTmpfs(ctx context.Context, config domain.LanguageCo
 
 // runContainer container configuration with resource limits
 func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
-	stdin string, writer domain.StreamWriter) {
+	stdin string, writer domain.StreamWriter, language string) error {
 	containerConfig := &container.Config{
 		Image:           image,
 		WorkingDir:      "/app",
@@ -489,7 +516,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	if err != nil {
 		logger.Error("failed to create container:", err)
 		writer.Error(fmt.Errorf("failed to create container: %w", err))
-		return
+		return err
 	}
 	defer u.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
 
@@ -503,7 +530,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	if err != nil {
 		logger.Error("failed to attach container:", err)
 		writer.Error(fmt.Errorf("failed to attach container: %w", err))
-		return
+		return err
 	}
 	defer attachResp.Close()
 
@@ -517,7 +544,8 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 	if err = u.client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
 		logger.Error("failed to start container:", err)
 		writer.Error(fmt.Errorf("failed to start container: %w", err))
-		return
+		metrics.ContainerFailures.WithLabelValues(language, "run").Inc()
+		return err
 	}
 
 	done := make(chan struct{})
@@ -549,7 +577,7 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 			logger.Error("failed to wait for container:", err)
 			writer.Error(fmt.Errorf("failed to wait for container: %w", err))
 			<-done
-			return
+			return err
 		}
 	case status = <-statusCh:
 	case <-ctx.Done():
@@ -557,11 +585,14 @@ func (u *UseCase) runContainer(ctx context.Context, image string, cmd []string,
 		_ = u.client.ContainerKill(killCtx, resp.ID, "SIGKILL")
 		<-done
 		writer.Error(fmt.Errorf("execution timeout"))
-		return
+		metrics.TotalExecutions.WithLabelValues(language, "timeout").Inc()
+		return errors.New("execution timeout")
 	}
 	<-done
 
 	writer.Done(int(status.StatusCode))
+	metrics.TotalExecutions.WithLabelValues(language, "success").Inc()
+	return nil
 }
 
 func joinCmd(cmd []string) string {
